@@ -1,0 +1,101 @@
+#include <stdio.h>
+#include <string.h>
+
+typedef struct {
+    char name[12];
+    unsigned char ip[4];
+    unsigned char mask[4];
+    unsigned char mac[6];
+    int port;                 /* switch port the PC is plugged into */
+} Computer;
+
+typedef struct { unsigned char mac[6]; int port; } CamEntry;
+CamEntry cam[10];             /* switch MAC (CAM) table */
+int camCount = 0;
+
+void printIP(unsigned char *ip) { printf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]); }
+void printMAC(unsigned char *m) {
+    printf("%02X:%02X:%02X:%02X:%02X:%02X", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+/* Same network if (IP AND mask) matches */
+int sameNetwork(Computer *a, Computer *b) {
+    for (int i = 0; i < 4; i++)
+        if ((a->ip[i] & a->mask[i]) != (b->ip[i] & b->mask[i])) return 0;
+    return 1;
+}
+
+int lookup(unsigned char *mac) {
+    for (int i = 0; i < camCount; i++)
+        if (memcmp(cam[i].mac, mac, 6) == 0) return cam[i].port;
+    return -1;
+}
+
+void learn(Computer *c) {
+    if (lookup(c->mac) != -1) return;
+    memcpy(cam[camCount].mac, c->mac, 6);
+    cam[camCount++].port = c->port;
+    printf("  Switch: learned ");
+    printMAC(c->mac);
+    printf(" on port %d\n", c->port);
+}
+
+void ping(Computer *src, Computer *dst) {
+    printf("\nPinging ");
+    printIP(dst->ip);
+    printf(" from %s with 32 bytes of data:\n", src->name);
+
+    if (!sameNetwork(src, dst)) {
+        printf("  Destination host unreachable (different network - a router is needed)\n");
+        return;
+    }
+    learn(src);
+    int p = lookup(dst->mac);
+    if (p == -1) {
+        printf("  Switch: ");
+        printMAC(dst->mac);
+        printf(" unknown -> flooding to all other ports\n");
+    } else {
+        printf("  Switch: forwarding only to port %d\n", p);
+    }
+    learn(dst);               /* destination replies, so switch learns it */
+
+    for (int i = 0; i < 4; i++) {
+        printf("  Reply from ");
+        printIP(dst->ip);
+        printf(": bytes=32 time=1ms TTL=64\n");
+    }
+    printf("  Packets: Sent = 4, Received = 4, Lost = 0 (0%% loss)\n");
+}
+
+int main(void) {
+    Computer pc[4] = {
+        {"Computer1", {192,168,1,10}, {255,255,255,0}, {0x00,0x1A,0x2B,0x3C,0x4D,0x01}, 1},
+        {"Computer2", {192,168,1,11}, {255,255,255,0}, {0x00,0x1A,0x2B,0x3C,0x4D,0x02}, 2},
+        {"Computer3", {192,168,1,12}, {255,255,255,0}, {0x00,0x1A,0x2B,0x3C,0x4D,0x03}, 3},
+        {"Computer4", {192,168,2,5},  {255,255,255,0}, {0x00,0x1A,0x2B,0x3C,0x4D,0x04}, 4}
+    };
+
+    printf("=== LAN Configuration (Star topology, 1 switch) ===\n");
+    for (int i = 0; i < 4; i++) {
+        printf("%s: IP ", pc[i].name);
+        printIP(pc[i].ip);
+        printf("  Mask ");
+        printIP(pc[i].mask);
+        printf("  MAC ");
+        printMAC(pc[i].mac);
+        printf("  Port %d\n", pc[i].port);
+    }
+
+    ping(&pc[0], &pc[1]);     /* ping 192.168.1.11 */
+    ping(&pc[1], &pc[2]);
+    ping(&pc[0], &pc[2]);     /* both MACs already known */
+    ping(&pc[0], &pc[3]);     /* different subnet */
+
+    printf("\n=== Switch MAC (CAM) Table ===\n");
+    for (int i = 0; i < camCount; i++) {
+        printMAC(cam[i].mac);
+        printf("  -> Port %d\n", cam[i].port);
+    }
+    return 0;
+}
